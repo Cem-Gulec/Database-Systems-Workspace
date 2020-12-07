@@ -1,0 +1,31 @@
+-- first query
+UPDATE dbo.Player
+SET Age= abs(checksum(NewId()) % 45) + 18
+
+-- second query
+Select p.PlayerID, p.FirstName + ' ' + p.LastName as FullName
+From dbo.Player p inner join dbo.PlayerTeam pt on p.PlayerID=pt.PlayerID
+Where p.FirstName not like '%nec%' and pt.TeamID=1
+Group By p.PlayerID, p.FirstName + ' ' + p.LastName, p.Age
+Having p.Age < (Select AVG(p2.Age) From dbo.Player p2)
+
+-- third query
+-- here i failed to update city but believing that selected right informations
+Select t.City + ' #p' + CAST(Count(*) as varchar) + ' #g' + CAST(pg.numberOfGoals as varchar)
+From Team t inner join PlayerTeam pt on t.TeamID=pt.TeamID
+		inner join (Select p2.PlayerID, Count(*) numberOfGoals 
+					From Player p2 inner join Goals g on p2.PlayerID=g.PlayerID
+					Group by p2.PlayerID) pg on pg.PlayerID=pt.PlayerID
+Group By t.City, pg.numberOfGoals
+
+-- fourth query
+Select TOP 10 p.PlayerID, p.FirstName, p.LastName, pg.numberOfGoals, pg2.numberOfMatches
+From Player p inner join (Select p2.PlayerID, Count(*) numberOfGoals 
+						  From Player p2 inner join Goals g on p2.PlayerID=g.PlayerID
+					      Group by p2.PlayerID) pg on pg.PlayerID=p.PlayerID
+
+			inner join (Select p3.PlayerID, Count(*) numberOfMatches 
+						From Goals g inner join Match m on g.MatchID=m.MatchID
+							inner join Player p3 on g.PlayerID=p3.PlayerID
+					    Group by p3.PlayerID) pg2 on pg2.PlayerID=pg.PlayerID
+Group By p.PlayerID, p.FirstName, p.LastName, pg.numberOfGoals, pg2.numberOfMatches
