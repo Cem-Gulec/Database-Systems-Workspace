@@ -1,0 +1,124 @@
+Create Table Standings (
+	Pos tinyint,
+	[Team Name] nvarchar(30),
+	GP tinyint,
+	W tinyint,
+	T tinyint,
+	L tinyint,
+	GF smallint,
+	GA smallint,
+	GD smallint,
+	Pts tinyint
+)
+
+Create Table TransactionLog (
+	LogID int identity(1,1) primary key,
+	LogTime datetime,
+	LogType char(1),
+	BeforeState nvarchar(500),
+	AfterState nvarchar(500),
+)
+
+Create Trigger Trg_RearrangeStandings
+	on Goals
+	after insert, update, delete
+as
+begin
+	-- variables to insert into TransactionLog
+	declare @LogTime datetime, @LogType char(1),
+			@BeforeState nvarchar(500), @AfterState nvarchar(500)
+    
+	-- variables to check whether they are inserted, updated or deleted
+	-- MIB: MatchID Before, PIB: PlayerID Before, IOGB: IsOwnGoal Before
+	-- MIA: MatchID After , PIA: PlayerID After , IOGA: IsOwnGoal After
+	declare @MIB int, @PIB int, @IOGB bit,
+			@MIA int, @PIA int, @IOGA bit
+	
+	-- in case a goal is entered explicitly check
+	-- whether its minute information between 1 and 90
+	declare @Min tinyint set @Min = (select i.Minute from inserted i)
+	if @Min<1 or @Min>90
+	begin
+		rollback transaction
+		raiserror('Not a valid range for Minute', 16, 1)
+	end
+
+	-- first checking whether PlayerID in table Goals is either in the home team 
+	-- or the visiting team for that match in season 13-14.
+	-- if deleted virtual table is not existing, both update and delete table will not be existing
+	if not exists (select * from deleted)
+	begin
+		if (select i.PlayerID from inserted i) not in (select pt.PlayerID
+													   from inserted i, Match m, PlayerTeam pt  
+													   where (m.HomeTeamID=pt.TeamID OR m.VisitingTeamID=pt.TeamID) and pt.Season='13-14'
+															  and m.MatchID=i.MatchID
+															  and i.PlayerID=pt.PlayerID)
+		-- In inner if statement if specified playerID is not inside the inserted table
+		-- directly it will not match with our rules and transaction will be rolled back
+		-- Else: transactions continue on executing and will eventually come across other
+		-- if statements such as inserted, delete and update
+		begin
+			rollback transaction
+			raiserror('Operation stopped execution due to operation out of scope.', 16, 1)
+		end
+	end
+
+	if exists (select * from inserted)
+	begin
+		if exists (select * from deleted)
+		begin
+			-- update case
+			set @MIB  = (select d.MatchID from deleted d)
+			set @MIA  = (select i.MatchID from inserted i)
+			set @PIB  = (select d.PlayerID from deleted d)
+			set @PIA  = (select i.PlayerID from inserted i)
+			set @IOGB = (select d.IsOwnGoal from deleted d)
+			set @IOGA = (select i.IsOwnGoal from inserted i)
+
+			set @LogTime = SYSDATETIME()
+			set @LogType = 'U'
+			set @BeforeState = convert(varchar(6), @MIB)  + ';' + convert(varchar(6), @PIB) + ';' + 
+							   convert(varchar(6), @IOGB) + ';' + convert(varchar(6), @Min)
+			set @AfterState  = convert(varchar(6), @MIA)  + ';' + convert(varchar(6), @PIA) + ';' + 
+							   convert(varchar(6), @IOGA) + ';' + convert(varchar(6), @Min)
+		end
+
+		else
+		begin
+			-- insert case
+			set @MIB  = ' '
+			set @MIA  = (select i.MatchID from inserted i)
+			set @PIB  = ' '
+			set @PIA  = (select i.PlayerID from inserted i)
+			set @IOGB = ' '
+			set @IOGA = (select i.IsOwnGoal from inserted i)
+
+			set @LogTime = SYSDATETIME()
+			set @LogType = 'I'
+			set @BeforeState = NULL
+			set @AfterState  = convert(varchar(6), @MIA)  + ';' + convert(varchar(6), @PIA) + ';' + 
+							   convert(varchar(6), @IOGA) + ';' + convert(varchar(6), @Min)
+		end
+	end
+
+	else
+	begin
+		-- delete case
+		set @MIB  = (select d.MatchID from deleted d)
+		set @MIA  = ' '
+		set @PIB  = (select d.PlayerID from deleted d)
+		set @PIA  = ' '
+		set @IOGB = (select d.IsOwnGoal from deleted d)
+		set @IOGA = ' '
+
+		set @LogTime = SYSDATETIME()
+		set @LogType = 'D'
+		set @BeforeState = convert(varchar(6), @MIB)  + ';' + convert(varchar(6), @PIB) + ';' + 
+						   convert(varchar(6), @IOGB) + ';' + convert(varchar(6), @Min)
+		set @AfterState  = NULL
+	end
+
+
+	insert into TransactionLog(LogTime, LogType, BeforeState, AfterState)
+	values (@LogTime, @LogType, @BeforeState, @AfterState)
+end
